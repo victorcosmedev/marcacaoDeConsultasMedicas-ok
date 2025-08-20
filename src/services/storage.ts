@@ -1,286 +1,176 @@
-import React, { useState } from 'react';
-import styled from 'styled-components/native';
-import { ScrollView, ViewStyle, Alert } from 'react-native';
-import { Button, ListItem, Badge } from 'react-native-elements';
-import { useAuth } from '../contexts/AuthContext';
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
-import { RootStackParamList } from '../types/navigation';
-import theme from '../styles/theme';
-import Header from '../components/Header';
-import { notificationService, Notification } from '../services/notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-type NotificationsScreenProps = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Notifications'>;
-};
+export interface StorageData {
+  [key: string]: any;
+}
 
-const NotificationsScreen: React.FC = () => {
-  const { user } = useAuth();
-  const navigation = useNavigation<NotificationsScreenProps['navigation']>();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
+interface CacheItem<T> {
+  data: T;
+  timestamp: number;
+  expiry?: number;
+}
 
-  const loadNotifications = async () => {
-    if (!user?.id) return;
-    
+// Cache em memória para melhor performance
+const cache = new Map<string, CacheItem<any>>();
+
+// Chaves de armazenamento centralizadas
+export const STORAGE_KEYS = {
+  USER: '@MedicalApp:user',
+  TOKEN: '@MedicalApp:token',
+  APPOINTMENTS: '@MedicalApp:appointments',
+  NOTIFICATIONS: '@MedicalApp:notifications',
+  REGISTERED_USERS: '@MedicalApp:registeredUsers',
+  APP_SETTINGS: '@MedicalApp:settings',
+  STATISTICS_CACHE: '@MedicalApp:statisticsCache',
+} as const;
+
+export const storageService = {
+  // Operações básicas com cache
+  async setItem<T>(key: string, value: T, expiryMinutes?: number): Promise<void> {
     try {
-      const userNotifications = await notificationService.getNotifications(user.id);
-      setNotifications(userNotifications);
+      const serializedValue = JSON.stringify(value);
+      await AsyncStorage.setItem(key, serializedValue);
+      
+      // Atualiza o cache
+      const cacheItem: CacheItem<T> = {
+        data: value,
+        timestamp: Date.now(),
+        expiry: expiryMinutes ? Date.now() + (expiryMinutes * 60 * 1000) : undefined,
+      };
+      cache.set(key, cacheItem);
     } catch (error) {
-      console.error('Erro ao carregar notificações:', error);
-    } finally {
-      setLoading(false);
+      console.error(`Erro ao salvar ${key}:`, error);
+      throw error;
     }
-  };
+  },
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadNotifications();
-    }, [user?.id])
-  );
-
-  const handleMarkAsRead = async (notificationId: string) => {
+  async getItem<T>(key: string, defaultValue?: T): Promise<T | null> {
     try {
-      await notificationService.markAsRead(notificationId);
-      loadNotifications();
-    } catch (error) {
-      console.error('Erro ao marcar como lida:', error);
-    }
-  };
+      // Verifica se existe no cache e se não expirou
+      const cached = cache.get(key);
+      if (cached) {
+        if (!cached.expiry || cached.expiry > Date.now()) {
+          return cached.data as T;
+        } else {
+          // Remove do cache se expirou
+          cache.delete(key);
+        }
+      }
 
-  const handleMarkAllAsRead = async () => {
-    if (!user?.id) return;
-    
+      // Busca no AsyncStorage
+      const stored = await AsyncStorage.getItem(key);
+      if (stored) {
+        const parsed = JSON.parse(stored) as T;
+        
+        // Adiciona ao cache
+        cache.set(key, {
+          data: parsed,
+          timestamp: Date.now(),
+        });
+        
+        return parsed;
+      }
+      
+      return defaultValue || null;
+    } catch (error) {
+      console.error(`Erro ao carregar ${key}:`, error);
+      return defaultValue || null;
+    }
+  },
+
+  async removeItem(key: string): Promise<void> {
     try {
-      await notificationService.markAllAsRead(user.id);
-      loadNotifications();
+      await AsyncStorage.removeItem(key);
+      cache.delete(key);
     } catch (error) {
-      console.error('Erro ao marcar todas como lidas:', error);
+      console.error(`Erro ao remover ${key}:`, error);
+      throw error;
     }
-  };
+  },
 
-  const handleDeleteNotification = async (notificationId: string) => {
-    Alert.alert(
-      'Excluir Notificação',
-      'Tem certeza que deseja excluir esta notificação?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await notificationService.deleteNotification(notificationId);
-              loadNotifications();
-            } catch (error) {
-              console.error('Erro ao excluir notificação:', error);
-            }
-          },
+  async clearAll(): Promise<void> {
+    try {
+      await AsyncStorage.clear();
+      cache.clear();
+    } catch (error) {
+      console.error('Erro ao limpar armazenamento:', error);
+      throw error;
+    }
+  },
+
+  // Backup e restore
+  async createBackup(): Promise<string> {
+    try {
+      const backup = {
+        timestamp: new Date().toISOString(),
+        data: {
+          appointments: await this.getItem(STORAGE_KEYS.APPOINTMENTS, []),
+          notifications: await this.getItem(STORAGE_KEYS.NOTIFICATIONS, []),
+          registeredUsers: await this.getItem(STORAGE_KEYS.REGISTERED_USERS, []),
+          settings: await this.getItem(STORAGE_KEYS.APP_SETTINGS, {}),
         },
-      ]
-    );
-  };
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'appointment_confirmed':
-        return '✅';
-      case 'appointment_cancelled':
-        return '❌';
-      case 'appointment_reminder':
-        return '⏰';
-      default:
-        return '📩';
+      };
+      return JSON.stringify(backup);
+    } catch (error) {
+      console.error('Erro ao criar backup:', error);
+      throw error;
     }
-  };
+  },
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+  async restoreFromBackup(backupString: string): Promise<void> {
+    try {
+      const backup = JSON.parse(backupString);
+      
+      if (backup.data) {
+        await this.setItem(STORAGE_KEYS.APPOINTMENTS, backup.data.appointments || []);
+        await this.setItem(STORAGE_KEYS.NOTIFICATIONS, backup.data.notifications || []);
+        await this.setItem(STORAGE_KEYS.REGISTERED_USERS, backup.data.registeredUsers || []);
+        await this.setItem(STORAGE_KEYS.APP_SETTINGS, backup.data.settings || {});
+      }
+    } catch (error) {
+      console.error('Erro ao restaurar backup:', error);
+      throw error;
+    }
+  },
+
+  // Limpeza de cache
+  clearCache(): void {
+    cache.clear();
+  },
+
+  // Informações de armazenamento
+  async getStorageInfo(): Promise<{
+    cacheSize: number;
+    totalKeys: number;
+    lastAccess: { [key: string]: number };
+  }> {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const lastAccess: { [key: string]: number } = {};
+    
+    cache.forEach((value, key) => {
+      lastAccess[key] = value.timestamp;
     });
-  };
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+    return {
+      cacheSize: cache.size,
+      totalKeys: allKeys.length,
+      lastAccess,
+    };
+  },
 
-  return (
-    <Container>
-      <Header />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <TitleContainer>
-          <Title>Notificações</Title>
-          {unreadCount > 0 && (
-            <Badge
-              value={unreadCount}
-              status="error"
-              containerStyle={styles.badge}
-            />
-          )}
-        </TitleContainer>
+  // Configurações da aplicação
+  async getAppSettings(): Promise<any> {
+    return await this.getItem(STORAGE_KEYS.APP_SETTINGS, {
+      theme: 'light',
+      notifications: true,
+      language: 'pt-BR',
+      autoBackup: true,
+    });
+  },
 
-        {unreadCount > 0 && (
-          <Button
-            title="Marcar todas como lidas"
-            onPress={handleMarkAllAsRead}
-            containerStyle={styles.markAllButton as ViewStyle}
-            buttonStyle={styles.markAllButtonStyle}
-          />
-        )}
-
-        <Button
-          title="Voltar"
-          onPress={() => navigation.goBack()}
-          containerStyle={styles.button as ViewStyle}
-          buttonStyle={styles.buttonStyle}
-        />
-
-        {loading ? (
-          <LoadingText>Carregando notificações...</LoadingText>
-        ) : notifications.length === 0 ? (
-          <EmptyContainer>
-            <EmptyText>Nenhuma notificação encontrada</EmptyText>
-          </EmptyContainer>
-        ) : (
-          notifications.map((notification) => (
-            <NotificationCard key={notification.id} isRead={notification.read}>
-              <ListItem
-                onPress={() => !notification.read && handleMarkAsRead(notification.id)}
-                onLongPress={() => handleDeleteNotification(notification.id)}
-              >
-                <NotificationIcon>{getNotificationIcon(notification.type)}</NotificationIcon>
-                <ListItem.Content>
-                  <NotificationHeader>
-                    <ListItem.Title style={styles.title}>
-                      {notification.title}
-                    </ListItem.Title>
-                    {!notification.read && <UnreadDot />}
-                  </NotificationHeader>
-                  <ListItem.Subtitle style={styles.message}>
-                    {notification.message}
-                  </ListItem.Subtitle>
-                  <DateText>{formatDate(notification.createdAt)}</DateText>
-                </ListItem.Content>
-              </ListItem>
-            </NotificationCard>
-          ))
-        )}
-      </ScrollView>
-    </Container>
-  );
-};
-
-const styles = {
-  scrollContent: {
-    padding: 20,
-  },
-  badge: {
-    marginLeft: 8,
-  },
-  markAllButton: {
-    marginBottom: 15,
-    width: '100%',
-  },
-  markAllButtonStyle: {
-    backgroundColor: theme.colors.success,
-    paddingVertical: 10,
-  },
-  button: {
-    marginBottom: 20,
-    width: '100%',
-  },
-  buttonStyle: {
-    backgroundColor: theme.colors.primary,
-    paddingVertical: 12,
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: theme.colors.text,
-  },
-  message: {
-    fontSize: 14,
-    color: theme.colors.text,
-    marginTop: 4,
-    lineHeight: 20,
+  async updateAppSettings(settings: Partial<any>): Promise<void> {
+    const currentSettings = await this.getAppSettings();
+    const updatedSettings = { ...currentSettings, ...settings };
+    await this.setItem(STORAGE_KEYS.APP_SETTINGS, updatedSettings);
   },
 };
-
-const Container = styled.View`
-  flex: 1;
-  background-color: ${theme.colors.background};
-`;
-
-const TitleContainer = styled.View`
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 20px;
-`;
-
-const Title = styled.Text`
-  font-size: 24px;
-  font-weight: bold;
-  color: ${theme.colors.text};
-  text-align: center;
-`;
-
-const LoadingText = styled.Text`
-  text-align: center;
-  color: ${theme.colors.text};
-  font-size: 16px;
-  margin-top: 20px;
-`;
-
-const EmptyContainer = styled.View`
-  align-items: center;
-  margin-top: 40px;
-`;
-
-const EmptyText = styled.Text`
-  text-align: center;
-  color: ${theme.colors.text};
-  font-size: 16px;
-  opacity: 0.7;
-`;
-
-const NotificationCard = styled.View<{ isRead: boolean }>`
-  background-color: ${(props) => props.isRead ? theme.colors.white : theme.colors.primary + '10'};
-  border-radius: 8px;
-  margin-bottom: 8px;
-  border-width: 1px;
-  border-color: ${(props) => props.isRead ? theme.colors.border : theme.colors.primary + '30'};
-`;
-
-const NotificationIcon = styled.Text`
-  font-size: 20px;
-  margin-right: 8px;
-`;
-
-const NotificationHeader = styled.View`
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-`;
-
-const UnreadDot = styled.View`
-  width: 8px;
-  height: 8px;
-  border-radius: 4px;
-  background-color: ${theme.colors.error};
-  margin-left: 8px;
-`;
-
-const DateText = styled.Text`
-  font-size: 12px;
-  color: ${theme.colors.text};
-  opacity: 0.6;
-  margin-top: 4px;
-`;
-
-export default NotificationsScreen;
