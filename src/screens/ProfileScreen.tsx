@@ -90,6 +90,10 @@ const styles = {
     backgroundColor: theme.colors.error,
     paddingVertical: 12,
   },
+  editButton: {
+    backgroundColor: theme.colors.success,
+    paddingVertical: 12,
+  },
 };
 
 const Container = styled.View`
