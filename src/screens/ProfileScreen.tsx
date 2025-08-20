@@ -57,6 +57,13 @@ const ProfileScreen: React.FC = () => {
         />
 
         <Button
+          title="Editar Perfil"
+          onPress={() => navigation.navigate('EditProfile' as any)}
+          containerStyle={styles.button as ViewStyle}
+          buttonStyle={styles.editButton}
+        />
+
+        <Button
           title="Sair"
           onPress={signOut}
           containerStyle={styles.button as ViewStyle}
