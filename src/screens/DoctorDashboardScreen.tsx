@@ -159,6 +159,13 @@ const DoctorDashboardScreen: React.FC = () => {
           buttonStyle={styles.buttonStyle}
         />
 
+        <Button
+          title="Configurações"
+          onPress={() => navigation.navigate('Settings')}
+          containerStyle={styles.button as ViewStyle}
+          buttonStyle={styles.settingsButton}
+        />
+
         <SectionTitle>Estatísticas Gerais</SectionTitle>
         {statistics && (
           <StatisticsGrid>
@@ -317,6 +324,10 @@ const styles = {
     fontSize: 14,
     fontWeight: '500',
     color: theme.colors.text,
+  },
+  settingsButton: {
+    backgroundColor: theme.colors.secondary,
+    paddingVertical: 12,
   },
 };
 
