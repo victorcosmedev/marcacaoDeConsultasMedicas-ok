@@ -1,141 +1,83 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useState, useEffect } from 'react';
+import styled from 'styled-components/native';
+import { TouchableOpacity } from 'react-native';
+import { Badge } from 'react-native-elements';
+import { useAuth } from '../contexts/AuthContext';
+import { useNavigation } from '@react-navigation/native';
+import { notificationService } from '../services/notifications';
+import theme from '../styles/theme';
 
-export interface Notification {
-  id: string;
-  userId: string;
-  title: string;
-  message: string;
-  type: 'appointment_confirmed' | 'appointment_cancelled' | 'appointment_reminder' | 'general';
-  read: boolean;
-  createdAt: string;
-  appointmentId?: string;
-}
+const NotificationBell: React.FC = () => {
+  const { user } = useAuth();
+  const navigation = useNavigation();
+  const [unreadCount, setUnreadCount] = useState(0);
 
-const STORAGE_KEY = '@MedicalApp:notifications';
-
-export const notificationService = {
-  async getNotifications(userId: string): Promise<Notification[]> {
+  const loadUnreadCount = async () => {
+    if (!user?.id) return;
+    
     try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      const allNotifications: Notification[] = stored ? JSON.parse(stored) : [];
-      return allNotifications.filter(n => n.userId === userId).sort((a, b) => 
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
+      const count = await notificationService.getUnreadCount(user.id);
+      setUnreadCount(count);
     } catch (error) {
-      console.error('Erro ao carregar notificações:', error);
-      return [];
+      console.error('Erro ao carregar contador de notificações:', error);
     }
+  };
+
+  useEffect(() => {
+    loadUnreadCount();
+    
+    // Recarrega o contador a cada 30 segundos
+    const interval = setInterval(loadUnreadCount, 30000);
+    
+    return () => clearInterval(interval);
+  }, [user?.id]);
+
+  // Atualiza quando a tela volta ao foco
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', loadUnreadCount);
+    return unsubscribe;
+  }, [navigation, user?.id]);
+
+  const handlePress = () => {
+    navigation.navigate('Notifications' as never);
+  };
+
+  return (
+    <TouchableOpacity onPress={handlePress}>
+      <BellContainer>
+        <BellIcon>🔔</BellIcon>
+        {unreadCount > 0 && (
+          <Badge
+            value={unreadCount > 99 ? '99+' : unreadCount.toString()}
+            status="error"
+            containerStyle={styles.badge}
+            textStyle={styles.badgeText}
+          />
+        )}
+      </BellContainer>
+    </TouchableOpacity>
+  );
+};
+
+const styles = {
+  badge: {
+    position: 'absolute' as const,
+    top: -8,
+    right: -8,
   },
-
-  async createNotification(notification: Omit<Notification, 'id' | 'createdAt' | 'read'>): Promise<void> {
-    try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      const allNotifications: Notification[] = stored ? JSON.parse(stored) : [];
-      
-      const newNotification: Notification = {
-        ...notification,
-        id: Date.now().toString(),
-        createdAt: new Date().toISOString(),
-        read: false,
-      };
-
-      allNotifications.push(newNotification);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(allNotifications));
-    } catch (error) {
-      console.error('Erro ao criar notificação:', error);
-    }
-  },
-
-  async markAsRead(notificationId: string): Promise<void> {
-    try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      const allNotifications: Notification[] = stored ? JSON.parse(stored) : [];
-      
-      const updatedNotifications = allNotifications.map(n => 
-        n.id === notificationId ? { ...n, read: true } : n
-      );
-
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedNotifications));
-    } catch (error) {
-      console.error('Erro ao marcar notificação como lida:', error);
-    }
-  },
-
-  async markAllAsRead(userId: string): Promise<void> {
-    try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      const allNotifications: Notification[] = stored ? JSON.parse(stored) : [];
-      
-      const updatedNotifications = allNotifications.map(n => 
-        n.userId === userId ? { ...n, read: true } : n
-      );
-
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedNotifications));
-    } catch (error) {
-      console.error('Erro ao marcar todas notificações como lidas:', error);
-    }
-  },
-
-  async deleteNotification(notificationId: string): Promise<void> {
-    try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      const allNotifications: Notification[] = stored ? JSON.parse(stored) : [];
-      
-      const filteredNotifications = allNotifications.filter(n => n.id !== notificationId);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filteredNotifications));
-    } catch (error) {
-      console.error('Erro ao deletar notificação:', error);
-    }
-  },
-
-  async getUnreadCount(userId: string): Promise<number> {
-    try {
-      const notifications = await this.getNotifications(userId);
-      return notifications.filter(n => !n.read).length;
-    } catch (error) {
-      console.error('Erro ao contar notificações não lidas:', error);
-      return 0;
-    }
-  },
-
-  // Notificações específicas para eventos do sistema
-  async notifyAppointmentConfirmed(patientId: string, appointmentDetails: any): Promise<void> {
-    await this.createNotification({
-      userId: patientId,
-      type: 'appointment_confirmed',
-      title: 'Consulta Confirmada',
-      message: `Sua consulta com ${appointmentDetails.doctorName} foi confirmada para ${appointmentDetails.date} às ${appointmentDetails.time}.`,
-      appointmentId: appointmentDetails.id,
-    });
-  },
-
-  async notifyAppointmentCancelled(patientId: string, appointmentDetails: any, reason?: string): Promise<void> {
-    await this.createNotification({
-      userId: patientId,
-      type: 'appointment_cancelled',
-      title: 'Consulta Cancelada',
-      message: `Sua consulta com ${appointmentDetails.doctorName} foi cancelada.${reason ? ` Motivo: ${reason}` : ''}`,
-      appointmentId: appointmentDetails.id,
-    });
-  },
-
-  async notifyNewAppointment(doctorId: string, appointmentDetails: any): Promise<void> {
-    await this.createNotification({
-      userId: doctorId,
-      type: 'general',
-      title: 'Nova Consulta Agendada',
-      message: `${appointmentDetails.patientName} agendou uma consulta para ${appointmentDetails.date} às ${appointmentDetails.time}.`,
-      appointmentId: appointmentDetails.id,
-    });
-  },
-
-  async notifyAppointmentReminder(userId: string, appointmentDetails: any): Promise<void> {
-    await this.createNotification({
-      userId: userId,
-      type: 'appointment_reminder',
-      title: 'Lembrete de Consulta',
-      message: `Você tem uma consulta agendada para amanhã às ${appointmentDetails.time} com ${appointmentDetails.doctorName || appointmentDetails.patientName}.`,
-      appointmentId: appointmentDetails.id,
-    });
+  badgeText: {
+    fontSize: 10,
   },
 };
+
+const BellContainer = styled.View`
+  position: relative;
+  padding: 8px;
+`;
+
+const BellIcon = styled.Text`
+  font-size: 24px;
+  color: ${theme.colors.white};
+`;
+
+export default NotificationBell;

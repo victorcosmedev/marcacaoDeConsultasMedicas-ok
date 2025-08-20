@@ -1,175 +1,113 @@
-import React from 'react';
-import styled from 'styled-components/native';
-import { Button, ListItem } from 'react-native-elements';
-import { useAuth } from '../contexts/AuthContext';
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types/navigation';
-import theme from '../styles/theme';
-import Header from '../components/Header';
-import ProfileImagePicker from '../components/ProfileImagePicker';
-import { ViewStyle } from 'react-native';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { authService } from '../services/auth';
+import { imageService } from '../services/imageService';
+import { User, LoginCredentials, RegisterData, AuthContextData } from '../types/auth';
 
-type ProfileScreenProps = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Profile'>;
+// Chaves de armazenamento
+const STORAGE_KEYS = {
+  USER: '@MedicalApp:user',
+  TOKEN: '@MedicalApp:token',
 };
 
-const ProfileScreen: React.FC = () => {
-  const { user, signOut } = useAuth();
-  const navigation = useNavigation<ProfileScreenProps['navigation']>();
+const AuthContext = createContext<AuthContextData>({} as AuthContextData);
 
-  const getRoleText = (role: string) => {
-    switch (role) {
-      case 'admin':
-        return 'Administrador';
-      case 'doctor':
-        return 'Médico';
-      case 'patient':
-        return 'Paciente';
-      default:
-        return role;
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadStoredUser();
+    loadRegisteredUsers();
+  }, []);
+
+  const loadStoredUser = async () => {
+    try {
+      const storedUser = await authService.getStoredUser();
+      if (storedUser) {
+        // Tenta carregar a imagem de perfil salva localmente
+        const savedImage = await imageService.getUserProfileImage(storedUser.id);
+        if (savedImage) {
+          storedUser.image = savedImage;
+        }
+        setUser(storedUser);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar usuário:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadRegisteredUsers = async () => {
+    try {
+      await authService.loadRegisteredUsers();
+    } catch (error) {
+      console.error('Erro ao carregar usuários registrados:', error);
+    }
+  };
+
+  const signIn = async (credentials: LoginCredentials) => {
+    try {
+      const response = await authService.signIn(credentials);
+      
+      // Tenta carregar a imagem de perfil salva localmente
+      const savedImage = await imageService.getUserProfileImage(response.user.id);
+      if (savedImage) {
+        response.user.image = savedImage;
+      }
+      
+      setUser(response.user);
+      await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(response.user));
+      await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, response.token);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const register = async (data: RegisterData) => {
+    try {
+      const response = await authService.register(data);
+      setUser(response.user);
+      await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(response.user));
+      await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, response.token);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      await authService.signOut();
+      setUser(null);
+      await AsyncStorage.removeItem(STORAGE_KEYS.USER);
+      await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+    }
+  };
+
+  const updateUser = async (updatedUser: User) => {
+    try {
+      setUser(updatedUser);
+      await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+    } catch (error) {
+      console.error('Erro ao atualizar usuário:', error);
+      throw error;
     }
   };
 
   return (
-    <Container>
-      <Header />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Title>Meu Perfil</Title>
-
-        <ProfileCard>
-          <ProfileImagePicker
-            currentImageUri={user?.image}
-            onImageSelected={() => {}} // Read-only na tela de perfil
-            size={120}
-            editable={false}
-          />
-          <Name>{user?.name}</Name>
-          <Email>{user?.email}</Email>
-          <RoleBadge role={user?.role || ''}>
-            <RoleText>{getRoleText(user?.role || '')}</RoleText>
-          </RoleBadge>
-          
-          {user?.role === 'doctor' && (
-            <SpecialtyText>Especialidade: {user?.specialty}</SpecialtyText>
-          )}
-        </ProfileCard>
-
-        <Button
-          title="Editar Perfil"
-          onPress={() => navigation.navigate('EditProfile' as any)}
-          containerStyle={styles.button as ViewStyle}
-          buttonStyle={styles.editButton}
-        />
-
-        <Button
-          title="Voltar"
-          onPress={() => navigation.goBack()}
-          containerStyle={styles.button as ViewStyle}
-          buttonStyle={styles.buttonStyle}
-        />
-
-        <Button
-          title="Sair"
-          onPress={signOut}
-          containerStyle={styles.button as ViewStyle}
-          buttonStyle={styles.logoutButton}
-        />
-      </ScrollView>
-    </Container>
+    <AuthContext.Provider value={{ user, loading, signIn, register, signOut, updateUser }}>
+      {children}
+    </AuthContext.Provider>
   );
 };
 
-const styles = {
-  scrollContent: {
-    padding: 20,
-  },
-  button: {
-    marginBottom: 20,
-    width: '100%',
-  },
-  buttonStyle: {
-    backgroundColor: theme.colors.primary,
-    paddingVertical: 12,
-  },
-  editButton: {
-    backgroundColor: theme.colors.success,
-    paddingVertical: 12,
-  },
-  logoutButton: {
-    backgroundColor: theme.colors.error,
-    paddingVertical: 12,
-  },
-};
-
-const Container = styled.View`
-  flex: 1;
-  background-color: ${theme.colors.background};
-`;
-
-const ScrollView = styled.ScrollView`
-  flex: 1;
-`;
-
-const Title = styled.Text`
-  font-size: 24px;
-  font-weight: bold;
-  color: ${theme.colors.text};
-  margin-bottom: 20px;
-  text-align: center;
-`;
-
-const ProfileCard = styled.View`
-  background-color: ${theme.colors.background};
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 20px;
-  align-items: center;
-  border-width: 1px;
-  border-color: ${theme.colors.border};
-`;
-
-// Avatar removido - agora usamos o ProfileImagePicker
-
-const Name = styled.Text`
-  font-size: 20px;
-  font-weight: bold;
-  color: ${theme.colors.text};
-  margin-bottom: 8px;
-`;
-
-const Email = styled.Text`
-  font-size: 16px;
-  color: ${theme.colors.text};
-  margin-bottom: 8px;
-`;
-
-const RoleBadge = styled.View<{ role: string }>`
-  background-color: ${(props: { role: string }) => {
-    switch (props.role) {
-      case 'admin':
-        return theme.colors.primary + '20';
-      case 'doctor':
-        return theme.colors.success + '20';
-      default:
-        return theme.colors.secondary + '20';
-    }
-  }};
-  padding: 4px 12px;
-  border-radius: 4px;
-  margin-bottom: 8px;
-`;
-
-const RoleText = styled.Text`
-  color: ${theme.colors.text};
-  font-size: 14px;
-  font-weight: 500;
-`;
-
-const SpecialtyText = styled.Text`
-  font-size: 16px;
-  color: ${theme.colors.text};
-  margin-top: 8px;
-`;
-
-export default ProfileScreen;
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}; 
