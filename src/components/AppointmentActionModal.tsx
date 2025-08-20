@@ -1,286 +1,225 @@
-import React, { useState } from 'react';
+import React from 'react';
 import styled from 'styled-components/native';
-import { ScrollView, ViewStyle, Alert } from 'react-native';
-import { Button, ListItem, Badge } from 'react-native-elements';
-import { useAuth } from '../contexts/AuthContext';
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
-import { RootStackParamList } from '../types/navigation';
+import { Modal, ViewStyle } from 'react-native';
+import { Button, Input } from 'react-native-elements';
 import theme from '../styles/theme';
-import Header from '../components/Header';
-import { notificationService, Notification } from '../services/notifications';
 
-type NotificationsScreenProps = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Notifications'>;
-};
+interface AppointmentActionModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: (reason?: string) => void;
+  actionType: 'confirm' | 'cancel';
+  appointmentDetails: {
+    patientName: string;
+    doctorName: string;
+    date: string;
+    time: string;
+    specialty: string;
+  };
+}
 
-const NotificationsScreen: React.FC = () => {
-  const { user } = useAuth();
-  const navigation = useNavigation<NotificationsScreenProps['navigation']>();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
+const AppointmentActionModal: React.FC<AppointmentActionModalProps> = ({
+  visible,
+  onClose,
+  onConfirm,
+  actionType,
+  appointmentDetails,
+}) => {
+  const [reason, setReason] = React.useState('');
 
-  const loadNotifications = async () => {
-    if (!user?.id) return;
-    
-    try {
-      const userNotifications = await notificationService.getNotifications(user.id);
-      setNotifications(userNotifications);
-    } catch (error) {
-      console.error('Erro ao carregar notificações:', error);
-    } finally {
-      setLoading(false);
-    }
+  const handleConfirm = () => {
+    onConfirm(reason.trim() || undefined);
+    setReason('');
+    onClose();
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadNotifications();
-    }, [user?.id])
-  );
-
-  const handleMarkAsRead = async (notificationId: string) => {
-    try {
-      await notificationService.markAsRead(notificationId);
-      loadNotifications();
-    } catch (error) {
-      console.error('Erro ao marcar como lida:', error);
-    }
+  const handleClose = () => {
+    setReason('');
+    onClose();
   };
 
-  const handleMarkAllAsRead = async () => {
-    if (!user?.id) return;
-    
-    try {
-      await notificationService.markAllAsRead(user.id);
-      loadNotifications();
-    } catch (error) {
-      console.error('Erro ao marcar todas como lidas:', error);
-    }
-  };
-
-  const handleDeleteNotification = async (notificationId: string) => {
-    Alert.alert(
-      'Excluir Notificação',
-      'Tem certeza que deseja excluir esta notificação?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await notificationService.deleteNotification(notificationId);
-              loadNotifications();
-            } catch (error) {
-              console.error('Erro ao excluir notificação:', error);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'appointment_confirmed':
-        return '✅';
-      case 'appointment_cancelled':
-        return '❌';
-      case 'appointment_reminder':
-        return '⏰';
-      default:
-        return '📩';
-    }
-  };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const isCancel = actionType === 'cancel';
 
   return (
-    <Container>
-      <Header />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <TitleContainer>
-          <Title>Notificações</Title>
-          {unreadCount > 0 && (
-            <Badge
-              value={unreadCount}
-              status="error"
-              containerStyle={styles.badge}
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={handleClose}
+    >
+      <Overlay>
+        <ModalContainer>
+          <Header>
+            <Title>
+              {isCancel ? 'Cancelar Consulta' : 'Confirmar Consulta'}
+            </Title>
+          </Header>
+
+          <Content>
+            <AppointmentInfo>
+              <InfoRow>
+                <InfoLabel>Paciente:</InfoLabel>
+                <InfoValue>{appointmentDetails.patientName}</InfoValue>
+              </InfoRow>
+              <InfoRow>
+                <InfoLabel>Médico:</InfoLabel>
+                <InfoValue>{appointmentDetails.doctorName}</InfoValue>
+              </InfoRow>
+              <InfoRow>
+                <InfoLabel>Especialidade:</InfoLabel>
+                <InfoValue>{appointmentDetails.specialty}</InfoValue>
+              </InfoRow>
+              <InfoRow>
+                <InfoLabel>Data/Hora:</InfoLabel>
+                <InfoValue>{appointmentDetails.date} às {appointmentDetails.time}</InfoValue>
+              </InfoRow>
+            </AppointmentInfo>
+
+            {isCancel && (
+              <ReasonContainer>
+                <Input
+                  label="Motivo do cancelamento (opcional)"
+                  placeholder="Digite o motivo..."
+                  value={reason}
+                  onChangeText={setReason}
+                  multiline
+                  numberOfLines={3}
+                  containerStyle={styles.reasonInput}
+                />
+              </ReasonContainer>
+            )}
+
+            <ConfirmationText isCancel={isCancel}>
+              {isCancel 
+                ? 'Tem certeza que deseja cancelar esta consulta?'
+                : 'Tem certeza que deseja confirmar esta consulta?'
+              }
+            </ConfirmationText>
+          </Content>
+
+          <ButtonContainer>
+            <Button
+              title="Cancelar"
+              onPress={handleClose}
+              containerStyle={styles.cancelButton as ViewStyle}
+              buttonStyle={styles.cancelButtonStyle}
             />
-          )}
-        </TitleContainer>
-
-        {unreadCount > 0 && (
-          <Button
-            title="Marcar todas como lidas"
-            onPress={handleMarkAllAsRead}
-            containerStyle={styles.markAllButton as ViewStyle}
-            buttonStyle={styles.markAllButtonStyle}
-          />
-        )}
-
-        <Button
-          title="Voltar"
-          onPress={() => navigation.goBack()}
-          containerStyle={styles.button as ViewStyle}
-          buttonStyle={styles.buttonStyle}
-        />
-
-        {loading ? (
-          <LoadingText>Carregando notificações...</LoadingText>
-        ) : notifications.length === 0 ? (
-          <EmptyContainer>
-            <EmptyText>Nenhuma notificação encontrada</EmptyText>
-          </EmptyContainer>
-        ) : (
-          notifications.map((notification) => (
-            <NotificationCard key={notification.id} isRead={notification.read}>
-              <ListItem
-                onPress={() => !notification.read && handleMarkAsRead(notification.id)}
-                onLongPress={() => handleDeleteNotification(notification.id)}
-              >
-                <NotificationIcon>{getNotificationIcon(notification.type)}</NotificationIcon>
-                <ListItem.Content>
-                  <NotificationHeader>
-                    <ListItem.Title style={styles.title}>
-                      {notification.title}
-                    </ListItem.Title>
-                    {!notification.read && <UnreadDot />}
-                  </NotificationHeader>
-                  <ListItem.Subtitle style={styles.message}>
-                    {notification.message}
-                  </ListItem.Subtitle>
-                  <DateText>{formatDate(notification.createdAt)}</DateText>
-                </ListItem.Content>
-              </ListItem>
-            </NotificationCard>
-          ))
-        )}
-      </ScrollView>
-    </Container>
+            <Button
+              title={isCancel ? 'Confirmar Cancelamento' : 'Confirmar'}
+              onPress={handleConfirm}
+              containerStyle={styles.confirmButton as ViewStyle}
+              buttonStyle={[
+                styles.confirmButtonStyle,
+                { backgroundColor: isCancel ? theme.colors.error : theme.colors.success }
+              ]}
+            />
+          </ButtonContainer>
+        </ModalContainer>
+      </Overlay>
+    </Modal>
   );
 };
 
 const styles = {
-  scrollContent: {
-    padding: 20,
+  reasonInput: {
+    marginBottom: 10,
   },
-  badge: {
+  cancelButton: {
+    flex: 1,
+    marginRight: 8,
+  },
+  confirmButton: {
+    flex: 1,
     marginLeft: 8,
   },
-  markAllButton: {
-    marginBottom: 15,
-    width: '100%',
-  },
-  markAllButtonStyle: {
-    backgroundColor: theme.colors.success,
-    paddingVertical: 10,
-  },
-  button: {
-    marginBottom: 20,
-    width: '100%',
-  },
-  buttonStyle: {
-    backgroundColor: theme.colors.primary,
+  cancelButtonStyle: {
+    backgroundColor: theme.colors.secondary,
     paddingVertical: 12,
   },
-  title: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: theme.colors.text,
-  },
-  message: {
-    fontSize: 14,
-    color: theme.colors.text,
-    marginTop: 4,
-    lineHeight: 20,
+  confirmButtonStyle: {
+    paddingVertical: 12,
   },
 };
 
-const Container = styled.View`
+const Overlay = styled.View`
   flex: 1;
-  background-color: ${theme.colors.background};
+  background-color: rgba(0, 0, 0, 0.5);
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
 `;
 
-const TitleContainer = styled.View`
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 20px;
+const ModalContainer = styled.View`
+  background-color: ${theme.colors.white};
+  border-radius: 12px;
+  width: 100%;
+  max-width: 400px;
+  shadow-color: ${theme.colors.text};
+  shadow-offset: 0px 4px;
+  shadow-opacity: 0.25;
+  shadow-radius: 4px;
+  elevation: 5;
+`;
+
+const Header = styled.View`
+  padding: 20px 20px 10px 20px;
+  border-bottom-width: 1px;
+  border-bottom-color: ${theme.colors.border};
 `;
 
 const Title = styled.Text`
-  font-size: 24px;
+  font-size: 20px;
   font-weight: bold;
   color: ${theme.colors.text};
   text-align: center;
 `;
 
-const LoadingText = styled.Text`
-  text-align: center;
-  color: ${theme.colors.text};
-  font-size: 16px;
-  margin-top: 20px;
+const Content = styled.View`
+  padding: 20px;
 `;
 
-const EmptyContainer = styled.View`
-  align-items: center;
-  margin-top: 40px;
-`;
-
-const EmptyText = styled.Text`
-  text-align: center;
-  color: ${theme.colors.text};
-  font-size: 16px;
-  opacity: 0.7;
-`;
-
-const NotificationCard = styled.View<{ isRead: boolean }>`
-  background-color: ${(props) => props.isRead ? theme.colors.white : theme.colors.primary + '10'};
+const AppointmentInfo = styled.View`
+  background-color: ${theme.colors.background};
   border-radius: 8px;
-  margin-bottom: 8px;
-  border-width: 1px;
-  border-color: ${(props) => props.isRead ? theme.colors.border : theme.colors.primary + '30'};
+  padding: 16px;
+  margin-bottom: 16px;
 `;
 
-const NotificationIcon = styled.Text`
-  font-size: 20px;
-  margin-right: 8px;
-`;
-
-const NotificationHeader = styled.View`
+const InfoRow = styled.View`
   flex-direction: row;
-  align-items: center;
   justify-content: space-between;
-  width: 100%;
+  margin-bottom: 8px;
 `;
 
-const UnreadDot = styled.View`
-  width: 8px;
-  height: 8px;
-  border-radius: 4px;
-  background-color: ${theme.colors.error};
-  margin-left: 8px;
-`;
-
-const DateText = styled.Text`
-  font-size: 12px;
+const InfoLabel = styled.Text`
+  font-size: 14px;
   color: ${theme.colors.text};
-  opacity: 0.6;
-  margin-top: 4px;
+  font-weight: 500;
 `;
 
-export default NotificationsScreen;
+const InfoValue = styled.Text`
+  font-size: 14px;
+  color: ${theme.colors.text};
+  font-weight: 400;
+  flex: 1;
+  text-align: right;
+`;
+
+const ReasonContainer = styled.View`
+  margin-bottom: 16px;
+`;
+
+const ConfirmationText = styled.Text<{ isCancel: boolean }>`
+  font-size: 16px;
+  color: ${(props: { isCancel: boolean }) => props.isCancel ? theme.colors.error : theme.colors.success};
+  text-align: center;
+  margin-bottom: 20px;
+  font-weight: 500;
+`;
+
+const ButtonContainer = styled.View`
+  flex-direction: row;
+  padding: 0 20px 20px 20px;
+`;
+
+export default AppointmentActionModal;
