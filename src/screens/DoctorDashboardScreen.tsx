@@ -12,6 +12,8 @@ import Header from '../components/Header';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import StatisticsCard from '../components/StatisticsCard';
 import { statisticsService, Statistics } from '../services/statistics';
+import AppointmentActionModal from '../components/AppointmentActionModal';
+import { notificationService } from '../services/notifications';
 
 type DoctorDashboardScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'DoctorDashboard'>;
@@ -61,6 +63,9 @@ const DoctorDashboardScreen: React.FC = () => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [statistics, setStatistics] = useState<Statistics | null>(null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [actionType, setActionType] = useState<'confirm' | 'cancel'>('confirm');
 
   const loadAppointments = async () => {
     try {
@@ -83,18 +88,50 @@ const DoctorDashboardScreen: React.FC = () => {
     }
   };
 
-  const handleUpdateStatus = async (appointmentId: string, newStatus: 'confirmed' | 'cancelled') => {
+  const handleOpenModal = (appointment: Appointment, action: 'confirm' | 'cancel') => {
+    setSelectedAppointment(appointment);
+    setActionType(action);
+    setModalVisible(true);
+  };
+
+  const handleCloseModal = () => {
+    setModalVisible(false);
+    setSelectedAppointment(null);
+  };
+
+  const handleConfirmAction = async (reason?: string) => {
+    if (!selectedAppointment) return;
+
     try {
       const storedAppointments = await AsyncStorage.getItem('@MedicalApp:appointments');
       if (storedAppointments) {
         const allAppointments: Appointment[] = JSON.parse(storedAppointments);
         const updatedAppointments = allAppointments.map(appointment => {
-          if (appointment.id === appointmentId) {
-            return { ...appointment, status: newStatus };
+          if (appointment.id === selectedAppointment.id) {
+            return { 
+              ...appointment, 
+              status: actionType === 'confirm' ? 'confirmed' : 'cancelled',
+              ...(reason && { cancelReason: reason })
+            };
           }
           return appointment;
         });
         await AsyncStorage.setItem('@MedicalApp:appointments', JSON.stringify(updatedAppointments));
+
+        // Envia notificação para o paciente
+        if (actionType === 'confirm') {
+          await notificationService.notifyAppointmentConfirmed(
+            selectedAppointment.patientId,
+            selectedAppointment
+          );
+        } else {
+          await notificationService.notifyAppointmentCancelled(
+            selectedAppointment.patientId,
+            selectedAppointment,
+            reason
+          );
+        }
+
         loadAppointments(); // Recarrega a lista
       }
     } catch (error) {
@@ -194,13 +231,13 @@ const DoctorDashboardScreen: React.FC = () => {
                   <ButtonContainer>
                     <Button
                       title="Confirmar"
-                      onPress={() => handleUpdateStatus(appointment.id, 'confirmed')}
+                      onPress={() => handleOpenModal(appointment, 'confirm')}
                       containerStyle={styles.actionButton as ViewStyle}
                       buttonStyle={styles.confirmButton}
                     />
                     <Button
                       title="Cancelar"
-                      onPress={() => handleUpdateStatus(appointment.id, 'cancelled')}
+                      onPress={() => handleOpenModal(appointment, 'cancel')}
                       containerStyle={styles.actionButton as ViewStyle}
                       buttonStyle={styles.cancelButton}
                     />
@@ -217,6 +254,22 @@ const DoctorDashboardScreen: React.FC = () => {
           containerStyle={styles.button as ViewStyle}
           buttonStyle={styles.logoutButton}
         />
+
+        {selectedAppointment && (
+          <AppointmentActionModal
+            visible={modalVisible}
+            onClose={handleCloseModal}
+            onConfirm={handleConfirmAction}
+            actionType={actionType}
+            appointmentDetails={{
+              patientName: selectedAppointment.patientName,
+              doctorName: selectedAppointment.doctorName,
+              date: selectedAppointment.date,
+              time: selectedAppointment.time,
+              specialty: selectedAppointment.specialty,
+            }}
+          />
+        )}
       </ScrollView>
     </Container>
   );
